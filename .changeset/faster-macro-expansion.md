@@ -1,10 +1,12 @@
 ---
-"baxe": patch
-"baxe-derive": patch
+baxe: patch
+baxe-derive: patch
 ---
 
-Reduce macro expansion overhead by reusing field bindings, preallocating output
-collections, and parsing attribute options directly from tokens. Generate direct
+Speed up Baxe macro expansion.
+
+Reuse field bindings, preallocate output collections, and parse attribute options
+directly from tokens. Generate direct
 `write!` calls instead of allocating intermediate formatted strings.
 
 Correctly parse `logMessageWith` with or without spaces around `=` and report

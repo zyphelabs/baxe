@@ -1,0 +1,39 @@
+[packages.baxe]
+versioned_files = ["crates/core/Cargo.toml", { path = "Cargo.lock", dependency = "baxe" }]
+changelog = "crates/core/CHANGELOG.md"
+
+[packages.baxe-derive]
+versioned_files = [
+    "crates/derive/Cargo.toml",
+    { path = "crates/core/Cargo.toml", dependency = "baxe-derive" },
+    { path = "Cargo.lock", dependency = "baxe-derive" },
+]
+changelog = "crates/derive/CHANGELOG.md"
+
+[changesets]
+dir = ".changeset"
+
+[changes]
+ignore_conventional_commits = true
+
+[[workflows]]
+name = "prepare-release"
+
+[[workflows.steps]]
+type = "PrepareRelease"
+
+[[workflows]]
+name = "release"
+
+[[workflows.steps]]
+type = "Release"
+
+[[workflows]]
+name = "document-change"
+
+[[workflows.steps]]
+type = "CreateChangeFile"
+
+[github]
+owner = "zyphelabs"
+repo = "baxe"

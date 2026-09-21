@@ -72,6 +72,6 @@ are expanded by rustc. The fixture emits nine fewer token trees per variant.
 all three variant shapes, metadata expressions using field bindings, response status,
 logging, hidden messages, formatting specifiers, and malformed input diagnostics.
 
-The baseline `cargo test --workspace --locked` already fails the documentation example
-in `crates/core/src/types.rs`: `baxe_error!` is not imported. That pre-existing doctest
-failure is outside these changes.
+The baseline `cargo test --workspace --locked` failed the documentation example
+in `crates/core/src/types.rs`: `baxe_error!` was not imported. The release automation
+integration fixes and separates the examples, so the full suite now passes.
