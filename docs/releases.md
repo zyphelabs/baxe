@@ -15,8 +15,8 @@ to this repository (repository settings or organization settings with repository
 - Secret `CRATES_TOKEN`, authorized to publish both crates on crates.io.
 
 Use the App token for release PRs so their CI checks are triggered. No credentials
-are needed for local release preparation or the ordinary PR checks. Configure the
-`check` job as a required branch-protection check on `main` if desired.
+are needed for local release preparation or the ordinary PR checks. The
+`ci` job matches the required `ci` status check on `main`.
 
 ## Normal flow
 
@@ -58,7 +58,7 @@ skips versions already present on crates.io, so a failure after the first crate
 uploads can resume without re-uploading it. Registry errors abort rather than being
 treated as missing versions. GitHub releases are created only after publication.
 
-The **CI** workflow can be dispatched on `main` to prepare a release without a new
+The **ci** workflow can be dispatched on `main` to prepare a release without a new
 push. **Publish** can be dispatched on `main` after a release is prepared; it refuses
 pending changesets or missing version-specific changelog entries. Prefer rerunning
 the original workflow if `main` has advanced since the release merge.
