@@ -1,9 +1,8 @@
----
-baxe: patch
-baxe-derive: patch
----
+## 0.1.7 (2026-09-22)
 
-Speed up Baxe macro expansion.
+### Fixes
+
+#### Speed up Baxe macro expansion.
 
 Reuse field bindings, preallocate output collections, and parse attribute options
 directly from tokens. Generate direct

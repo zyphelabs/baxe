@@ -1,6 +1,6 @@
 [package]
 name = "baxe"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 description = "A library that simplifies error handling in Axum."
 license = "MIT"
@@ -10,7 +10,7 @@ repository = "https://github.com/zyphelabs/baxe"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 axum = ">=0.7.0"
-baxe-derive = { path = "../derive", version = "0.1.6" }
+baxe-derive = { path = "../derive", version = "0.1.7" }
 
 [dev-dependencies]
 thiserror = "2"
