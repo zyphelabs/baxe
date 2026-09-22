@@ -4,8 +4,18 @@
 /// # Examples
 /// 
 /// ```
+/// use baxe::baxe_error;
+/// # type Tags = String;
 /// baxe_error!(Tags, serde(rename_all = "camelCase"), derive(Clone));
+/// ```
+///
+/// ```
+/// use baxe::baxe_error;
 /// baxe_error!(String, serde(rename_all = "camelCase"));
+/// ```
+///
+/// ```
+/// use baxe::baxe_error;
 /// baxe_error!(String,);
 /// ```
 #[macro_export]

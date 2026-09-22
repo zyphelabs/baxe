@@ -1,0 +1,92 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          components: clippy
+      - run: cargo test --workspace --locked
+      - run: cargo clippy --workspace --all-targets --locked
+      - run: python3 -B -m unittest discover -s scripts -p 'test_*.py'
+      - uses: knope-dev/action@19617851f9f13ab2f27a05989c55efb18aca3675 # v2.1.2
+        with:
+          version: 0.22.4
+      - name: Validate release configuration and changesets
+        run: knope --dry-run prepare-release
+      - name: Check change documentation
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/check_changesets.py "$BASE_SHA" "$HEAD_SHA"
+
+  prepare-release:
+    needs: ci
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Find pending changesets
+        id: changesets
+        run: |
+          if find .changeset -maxdepth 1 -name '*.md' -print -quit | grep -q .; then
+            echo 'pending=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Generate release bot token
+        if: steps.changesets.outputs.pending == 'true'
+        id: bot
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.ZYPHE_RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.ZYPHE_RELEASE_BOT_APP_PRIVATE_KEY }}
+      - uses: knope-dev/action@19617851f9f13ab2f27a05989c55efb18aca3675 # v2.1.2
+        if: steps.changesets.outputs.pending == 'true'
+        with:
+          version: 0.22.4
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        if: steps.changesets.outputs.pending == 'true'
+      - name: Prepare release metadata
+        if: steps.changesets.outputs.pending == 'true'
+        run: |
+          knope prepare-release
+          cargo metadata --locked --no-deps --format-version 1 > /dev/null
+          cargo test --workspace --locked
+      - name: Create or update release PR
+        if: steps.changesets.outputs.pending == 'true'
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
+        with:
+          token: ${{ steps.bot.outputs.token }}
+          branch: release
+          base: main
+          title: 'chore: prepare release'
+          commit-message: 'chore: prepare release'
+          body: |
+            Prepared by Knope from the pending changesets.
+
+            Review the Cargo versions, dependency requirements, and changelogs.
+            Merging this PR publishes the crates and creates their GitHub releases.

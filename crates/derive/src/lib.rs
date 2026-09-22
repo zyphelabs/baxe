@@ -1,26 +1,35 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, spanned::Spanned, Data, DeriveInput, Expr, Fields};
+use syn::{parse::Parser, spanned::Spanned, Data, DeriveInput, Expr, Fields};
 
 #[proc_macro_attribute]
 pub fn error(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let input_attrs = attr.to_string();
+    expand(attr.into(), item.into())
+        .unwrap_or_else(|err| err.to_compile_error())
+        .into()
+}
 
+fn expand(
+    attr: proc_macro2::TokenStream,
+    item: proc_macro2::TokenStream,
+) -> syn::Result<proc_macro2::TokenStream> {
     let mut log_message_with = None;
     let mut hide_message = false;
 
-    for part in input_attrs.split(',') {
-        let part = part.trim();
-        if part.starts_with("logMessageWith=") {
-            if let Some((_, value)) = part.split_once('=') {
-                log_message_with = Some(syn::parse_str::<Expr>(&value.trim().to_string()).unwrap());
-            }
-        } else if part == "hideMessage" {
+    syn::meta::parser(|meta| {
+        if meta.path.is_ident("logMessageWith") {
+            log_message_with = Some(meta.value()?.parse::<Expr>()?);
+        } else if meta.path.is_ident("hideMessage") {
             hide_message = true;
+        } else if meta.input.peek(syn::Token![=]) {
+            // Preserve support for ignored, unknown options.
+            let _ = meta.value()?.parse::<Expr>()?;
         }
-    }
+        Ok(())
+    })
+    .parse2(attr)?;
 
-    let input = parse_macro_input!(item as DeriveInput);
+    let input: DeriveInput = syn::parse2(item)?;
 
     for attr in &input.attrs {
         if attr.path().is_ident("baxe") {
@@ -28,14 +37,19 @@ pub fn error(attr: TokenStream, item: TokenStream) -> TokenStream {
                 attr.span(),
                 "The #[baxe(...)] attribute is only allowed on enum variants, not on the enum itself.",
             );
-            return err.to_compile_error().into();
+            return Err(err);
         }
     }
 
     let enum_name = input.ident;
     let data = match input.data {
         Data::Enum(data) => data,
-        _ => panic!("baxe::error can only be applied to enums"),
+        _ => {
+            return Err(syn::Error::new(
+                enum_name.span(),
+                "baxe::error can only be applied to enums",
+            ))
+        }
     };
 
     let variants_def = data
@@ -61,76 +75,54 @@ pub fn error(attr: TokenStream, item: TokenStream) -> TokenStream {
         })
         .collect::<Vec<_>>();
 
-    let matches = data
-        .variants
-        .iter()
-        .map(|variant| {
-            let variant_ident = &variant.ident;
-            let attrs = parse_baxe_attributes(variant);
-            let (status, tag, code, message) = (attrs.status, attrs.tag, attrs.code, attrs.message);
+    let count = data.variants.len();
+    let mut patterns = Vec::with_capacity(count);
+    let mut statuses = Vec::with_capacity(count);
+    let mut tags = Vec::with_capacity(count);
+    let mut codes = Vec::with_capacity(count);
+    let mut messages = Vec::with_capacity(count);
 
-            let pattern = match &variant.fields {
-                Fields::Unit => quote! { 
-                    #enum_name::#variant_ident
-                },
-                Fields::Unnamed(ref fields) => {
-                    let field_patterns: Vec<_> = fields.unnamed.iter().enumerate().map(|(i, _)| {
+    for variant in &data.variants {
+        let variant_ident = &variant.ident;
+        let attrs = parse_baxe_attributes(variant)?;
+        let message = attrs.message;
+        let (pattern, bindings) = match &variant.fields {
+            Fields::Unit => (quote! { #enum_name::#variant_ident }, Vec::new()),
+            Fields::Unnamed(fields) => {
+                let bindings: Vec<_> = fields
+                    .unnamed
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| {
                         syn::Ident::new(&format!("arg{i}"), proc_macro2::Span::call_site())
-                    }).collect();
-                    quote! {
-                        #enum_name::#variant_ident(#(#field_patterns),*)
-                    }
-                }
-                Fields::Named(ref fields) => {
-                    let field_patterns: Vec<_> = fields.named.iter().map(|field| {
-                        field.ident.clone().unwrap()
-                    }).collect();
-                    quote! {
-                        #enum_name::#variant_ident { #(#field_patterns),* }
-                    }
-                }
-            };
+                    })
+                    .collect();
+                (
+                    quote! { #enum_name::#variant_ident(#(#bindings),*) },
+                    bindings,
+                )
+            }
+            Fields::Named(fields) => {
+                let bindings: Vec<_> = fields
+                    .named
+                    .iter()
+                    .map(|field| field.ident.clone().unwrap())
+                    .collect();
+                (
+                    quote! { #enum_name::#variant_ident { #(#bindings),* } },
+                    bindings,
+                )
+            }
+        };
 
-            let message = match &variant.fields {
-                Fields::Unit => quote! { 
-                    #enum_name::#variant_ident => { 
-                        write!(f, #message) 
-                    }
-                },
-                Fields::Unnamed(ref fields) => {
-                    let field_patterns: Vec<_> = fields.unnamed.iter().enumerate().map(|(i, _)| {
-                        syn::Ident::new(&format!("arg{i}"), proc_macro2::Span::call_site())
-                    }).collect();
-            
-                    let field_names = &field_patterns;
-                    quote! {
-                        #enum_name::#variant_ident(#(#field_patterns),*) => {
-                            let formatted_message = format!(#message, #(#field_names),*);
-                            write!(f, "{formatted_message}")
-                        }
-                    }
-                }
-                Fields::Named(ref fields) => {
-                    let field_patterns: Vec<_> = fields.named.iter().map(|field| {
-                        field.ident.clone().unwrap()
-                    }).collect();
-            
-                    let field_names = &field_patterns;
-                    quote! {
-                        #enum_name::#variant_ident { #(#field_patterns),* } => {
-                            let formatted_message = format!(#message, #(#field_names),*);
-                            write!(f, "{formatted_message}")
-                        }
-                    }
-                }
-            };
-
-            (pattern, status, tag, code, message)
-        })
-        .collect::<Vec<_>>();
-
-    let (patterns, statuses, tags, codes, messages): (Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>) =
-        matches.into_iter().unzip_n_vec();
+        messages.push(quote! {
+            #pattern => write!(f, #message #(, #bindings)*)
+        });
+        patterns.push(pattern);
+        statuses.push(attrs.status);
+        tags.push(attrs.tag);
+        codes.push(attrs.code);
+    }
 
     let log_statement = if let Some(log_fn) = log_message_with {
         quote! {
@@ -165,7 +157,7 @@ pub fn error(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         impl std::error::Error for #enum_name {}
-        
+
         impl BackendError for #enum_name {
             fn to_status_code(&self) -> axum::http::StatusCode {
                 match self {
@@ -202,7 +194,7 @@ pub fn error(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    TokenStream::from(expanded)
+    Ok(expanded)
 }
 
 struct BaxeAttributes {
@@ -212,7 +204,7 @@ struct BaxeAttributes {
     message: proc_macro2::TokenStream,
 }
 
-fn parse_baxe_attributes(variant: &syn::Variant) -> BaxeAttributes {
+fn parse_baxe_attributes(variant: &syn::Variant) -> syn::Result<BaxeAttributes> {
     let mut attrs = BaxeAttributes {
         status: quote!(None),
         tag: quote!(None),
@@ -224,46 +216,22 @@ fn parse_baxe_attributes(variant: &syn::Variant) -> BaxeAttributes {
         if attr.path().is_ident("baxe") {
             attr.parse_nested_meta(|meta| {
                 let value = meta.value()?.parse::<Expr>()?;
-                if let Some(ident) = meta.path.get_ident().map(|ident| ident.to_string()) {
-                    match ident.as_str() {
-                        "status" => attrs.status = quote!(#value),
-                        "tag" => attrs.tag = quote!(#value),
-                        "code" => attrs.code = quote!(#value),
-                        "message" => attrs.message = quote!(#value),
-                        _ => {}
-                    }
+                if meta.path.is_ident("status") {
+                    attrs.status = quote!(#value);
+                } else if meta.path.is_ident("tag") {
+                    attrs.tag = quote!(#value);
+                } else if meta.path.is_ident("code") {
+                    attrs.code = quote!(#value);
+                } else if meta.path.is_ident("message") {
+                    attrs.message = quote!(#value);
                 }
                 Ok(())
-            })
-            .unwrap();
+            })?;
         }
     }
 
-    attrs
+    Ok(attrs)
 }
 
-trait UnzipN<T1, T2, T3, T4, T5> {
-    fn unzip_n_vec(self) -> (Vec<T1>, Vec<T2>, Vec<T3>, Vec<T4>, Vec<T5>);
-}
-
-impl<T1, T2, T3, T4, T5, I: Iterator<Item = (T1, T2, T3, T4, T5)>> UnzipN<T1, T2, T3, T4, T5>
-    for I
-{
-    fn unzip_n_vec(self) -> (Vec<T1>, Vec<T2>, Vec<T3>, Vec<T4>, Vec<T5>) {
-        let mut t1 = Vec::new();
-        let mut t2 = Vec::new();
-        let mut t3 = Vec::new();
-        let mut t4 = Vec::new();
-        let mut t5 = Vec::new();
-
-        for (x1, x2, x3, x4, x5) in self {
-            t1.push(x1);
-            t2.push(x2);
-            t3.push(x3);
-            t4.push(x4);
-            t5.push(x5);
-        }
-
-        (t1, t2, t3, t4, t5)
-    }
-}
+#[cfg(test)]
+mod tests;
